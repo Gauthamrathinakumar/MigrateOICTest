@@ -1,0 +1,949 @@
+{
+  "info": {
+    "name": "Oracle HCM - Clone Worker (PROD to lower env)",
+    "description": "Given a person name or work email, find the worker in PROD, build a create payload from the live response, and POST it to a lower environment. Run the folder top to bottom, or use the Collection Runner.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "api_version", "value": "11.13.18.05" },
+    { "key": "expand_list", "value": "names,emails,legislativeInfo,workRelationships,workRelationships.assignments" },
+    { "key": "include_children", "value": "names,emails,legislativeInfo,workRelationships" },
+    { "key": "only_primary", "value": "true" },
+    { "key": "copy_person_number", "value": "false" },
+    { "key": "primary_email_type", "value": "W1" },
+    { "key": "hire_action_code", "value": "HIRE" },
+    { "key": "person_type_code", "value": "" },
+    { "key": "effective_start_date", "value": "" },
+    { "key": "allow_duplicate", "value": "false" },
+    { "key": "keep_ids", "value": "" },
+    { "key": "search_q", "value": "" },
+    { "key": "prod_person_id", "value": "" },
+    { "key": "prod_person_number", "value": "" },
+    { "key": "prod_display_name", "value": "" },
+    { "key": "prod_workers_uniq_id", "value": "" },
+    { "key": "prod_email", "value": "" },
+    { "key": "create_payload", "value": "" },
+    { "key": "ref_resource", "value": "jobs" },
+    { "key": "ref_filter", "value": "" },
+    { "key": "target_person_id", "value": "" },
+    { "key": "target_person_number", "value": "" },
+    { "key": "target_workers_uniq_id", "value": "" },
+    { "key": "role_codes", "value": "ORA_PER_EMPLOYEE_ABSTRACT" },
+    { "key": "target_username", "value": "" },
+    { "key": "role_queue", "value": "" },
+    { "key": "current_role_code", "value": "" },
+    { "key": "target_role_id", "value": "" },
+    { "key": "target_user_guid", "value": "" },
+    { "key": "target_user_id", "value": "" },
+    { "key": "target_login_username", "value": "" },
+    { "key": "user_account_payload", "value": "" },
+    { "key": "role_assign_payload", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 Find person in prod",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const term = (pm.variables.get('search_term') || '').trim();",
+              "if (!term) { throw new Error('Set search_term to a display name or a work email address.'); }",
+              "const safe = term.replace(/'/g, \"''\");",
+              "const q = term.indexOf('@') > -1",
+              "  ? \"emails.EmailAddress like '\" + safe + \"'\"",
+              "  : \"DisplayName like '%\" + safe + \"%'\";",
+              "pm.collectionVariables.set('search_q', q);",
+              "console.log('Search filter -> ' + q);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Prod search returned 200', function () { pm.response.to.have.status(200); });",
+              "",
+              "const items = (pm.response.json().items) || [];",
+              "",
+              "if (items.length === 0) {",
+              "  postman.setNextRequest(null);",
+              "  throw new Error('No worker in prod matched: ' + pm.variables.get('search_term'));",
+              "}",
+              "",
+              "if (items.length > 1) {",
+              "  console.log('Candidates:');",
+              "  items.forEach(function (i) {",
+              "    const em = (i.emails || []).map(function (e) { return e.EmailAddress; }).join(', ');",
+              "    console.log('  ' + i.PersonNumber + '  ' + i.DisplayName + '  [' + em + ']');",
+              "  });",
+              "  postman.setNextRequest(null);",
+              "  throw new Error(items.length + ' matches. Set search_term to the exact work email of the one you want (see console).');",
+              "}",
+              "",
+              "const w = items[0];",
+              "const href = ((w.links || []).find(function (l) { return l.rel === 'self'; }) || (w.links || [])[0] || {}).href || '';",
+              "const m = href.match(/\\/workers\\/([^\\/?]+)/);",
+              "if (!m) {",
+              "  postman.setNextRequest(null);",
+              "  throw new Error('Could not read workersUniqID from the self link. Make sure onlyData=true is NOT set on this request.');",
+              "}",
+              "",
+              "pm.collectionVariables.set('prod_workers_uniq_id', m[1]);",
+              "pm.collectionVariables.set('prod_person_id', String(w.PersonId || ''));",
+              "pm.collectionVariables.set('prod_person_number', String(w.PersonNumber || ''));",
+              "pm.collectionVariables.set('prod_display_name', String(w.DisplayName || ''));",
+              "",
+              "const wantType = pm.variables.get('primary_email_type') || 'W1';",
+              "const emails = w.emails || [];",
+              "const pick = emails.find(function (e) { return e.EmailType === wantType; }) || emails[0] || {};",
+              "pm.collectionVariables.set('prod_email', String(pick.EmailAddress || ''));",
+              "",
+              "console.log('Matched ' + w.DisplayName + ' (' + w.PersonNumber + ')');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{prod_user}}", "type": "string" },
+            { "key": "password", "value": "{{prod_pass}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "REST-Framework-Version", "value": "4" }],
+        "url": {
+          "raw": "{{prod_host}}/hcmRestApi/resources/{{api_version}}/workers?q={{search_q}}&expand=emails&limit=25",
+          "host": ["{{prod_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "workers"],
+          "query": [
+            { "key": "q", "value": "{{search_q}}" },
+            { "key": "expand", "value": "emails" },
+            { "key": "limit", "value": "25" }
+          ]
+        },
+        "description": "Name search uses DisplayName LIKE. Email search uses the emails.EmailAddress child filter. Do not add onlyData=true here - the self link is needed to get workersUniqID."
+      }
+    },
+    {
+      "name": "02 Get full worker from prod",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Prod worker fetch returned 200', function () { pm.response.to.have.status(200); });",
+              "",
+              "const V = function (k, d) {",
+              "  const x = pm.variables.get(k);",
+              "  return (x === undefined || x === null || String(x) === '') ? d : x;",
+              "};",
+              "const isTrue = function (v) { return String(v).toLowerCase() === 'true'; };",
+              "",
+              "const src = pm.response.json();",
+              "",
+              "const AUDIT = ['links', 'CreatedBy', 'CreationDate', 'LastUpdatedBy', 'LastUpdateDate',",
+              "  'LastUpdateLogin', 'ObjectVersionNumber', 'WorkerNumber', 'GUID', 'PersonUniqueId',",
+              "  'CurrentEmployeeFlag', 'CurrentWorkerFlag', 'CurrentContingentWorkerFlag',",
+              "  'CurrentPendingWorkerFlag', 'EffectiveEndDate', 'EffectiveSequence', 'EffectiveLatestChange'];",
+              "",
+              "if (!isTrue(V('copy_person_number', 'false'))) { AUDIT.push('PersonNumber'); }",
+              "",
+              "const KEEP_IDS = new Set(String(V('keep_ids', '')).split(',').map(function (s) { return s.trim(); }).filter(Boolean));",
+              "",
+              "// Surrogate keys differ per environment. Drop *Id attributes and let the API",
+              "// resolve the *Code / *Name equivalents in the target pod instead.",
+              "function scrub(node) {",
+              "  if (Array.isArray(node)) {",
+              "    return node.map(scrub).filter(function (x) { return x !== undefined; });",
+              "  }",
+              "  if (node && typeof node === 'object') {",
+              "    const out = {};",
+              "    Object.keys(node).forEach(function (k) {",
+              "      if (AUDIT.indexOf(k) > -1) { return; }",
+              "      if (/(Id|Ids|UniqID)$/.test(k) && !KEEP_IDS.has(k)) { return; }",
+              "      const v = node[k];",
+              "      if (v === null || v === '') { return; }",
+              "      const s = scrub(v);",
+              "      if (s === undefined) { return; }",
+              "      if (Array.isArray(s) && s.length === 0) { return; }",
+              "      if (s && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).length === 0) { return; }",
+              "      out[k] = s;",
+              "    });",
+              "    return out;",
+              "  }",
+              "  return node;",
+              "}",
+              "",
+              "const CHILD_KEYS = ['names', 'emails', 'phones', 'addresses', 'legislativeInfo',",
+              "  'workRelationships', 'citizenships', 'nationalIdentifiers', 'ethnicities', 'religions',",
+              "  'visas', 'driverLicenses', 'disabilities', 'externalIdentifiers',",
+              "  'otherCommunicationAccounts', 'photos', 'workersDFF', 'workersEFF', 'representatives'];",
+              "",
+              "const clean = scrub(src);",
+              "const payload = {};",
+              "Object.keys(clean).forEach(function (k) {",
+              "  if (CHILD_KEYS.indexOf(k) === -1) { payload[k] = clean[k]; }",
+              "});",
+              "",
+              "const wanted = String(V('include_children', 'names,emails,legislativeInfo,workRelationships'))",
+              "  .split(',').map(function (s) { return s.trim(); }).filter(Boolean);",
+              "const primaryOnly = isTrue(V('only_primary', 'true'));",
+              "const flagged = function (v) { return v === true || v === 'Y' || v === 'true'; };",
+              "",
+              "wanted.forEach(function (key) {",
+              "  let arr = clean[key];",
+              "  if (!Array.isArray(arr) || arr.length === 0) { return; }",
+              "",
+              "  if (key === 'names') {",
+              "    const g = arr.filter(function (n) { return n.NameType === 'GLOBAL'; });",
+              "    arr = g.length ? g : [arr[0]];",
+              "  }",
+              "",
+              "  if (key === 'emails') {",
+              "    const wantType = V('primary_email_type', 'W1');",
+              "    const e = arr.filter(function (x) { return x.EmailType === wantType; });",
+              "    arr = e.length ? [e[0]] : [arr[0]];",
+              "  }",
+              "",
+              "  if (key === 'workRelationships') {",
+              "    if (primaryOnly) {",
+              "      const p = arr.filter(function (r) { return flagged(r.PrimaryFlag); });",
+              "      arr = [(p.length ? p[0] : arr[0])];",
+              "    }",
+              "    arr = arr.map(function (rel) {",
+              "      const r = JSON.parse(JSON.stringify(rel));",
+              "      if (!r.ActionCode) { r.ActionCode = V('hire_action_code', 'HIRE'); }",
+              "      if (r.PrimaryFlag === undefined) { r.PrimaryFlag = true; }",
+              "      let asg = Array.isArray(r.assignments) ? r.assignments : [];",
+              "      if (primaryOnly && asg.length) {",
+              "        const pa = asg.filter(function (a) { return flagged(a.PrimaryAssignmentFlag); });",
+              "        asg = [(pa.length ? pa[0] : asg[0])];",
+              "      }",
+              "      const ptc = V('person_type_code', '');",
+              "      asg = asg.map(function (a) {",
+              "        const c = JSON.parse(JSON.stringify(a));",
+              "        if (!c.ActionCode) { c.ActionCode = V('hire_action_code', 'HIRE'); }",
+              "        if (ptc && !c.PersonTypeCode) { c.PersonTypeCode = ptc; }",
+              "        return c;",
+              "      });",
+              "      if (asg.length) { r.assignments = asg; } else { delete r.assignments; }",
+              "      return r;",
+              "    });",
+              "  }",
+              "",
+              "  payload[key] = arr;",
+              "});",
+              "",
+              "// Root EffectiveStartDate drives the whole create. Prefer the explicit override,",
+              "// then the work relationship start date, then today.",
+              "const rel0 = (payload.workRelationships || [])[0] || {};",
+              "const asg0 = (rel0.assignments || [])[0] || {};",
+              "const esd = V('effective_start_date', '') || rel0.StartDate || asg0.EffectiveStartDate ||",
+              "  new Date().toISOString().slice(0, 10);",
+              "payload.EffectiveStartDate = esd;",
+              "if (rel0 && !rel0.StartDate) { rel0.StartDate = esd; }",
+              "",
+              "const json = JSON.stringify(payload, null, 2);",
+              "pm.collectionVariables.set('create_payload', json);",
+              "",
+              "// Seed the reference-code pre-flight with the assignment's job code.",
+              "if (asg0.JobCode) {",
+              "  pm.collectionVariables.set('ref_resource', 'jobs');",
+              "  pm.collectionVariables.set('ref_filter', \"JobCode='\" + asg0.JobCode + \"'\");",
+              "}",
+              "",
+              "console.log('--- create_payload ---');",
+              "console.log(json);",
+              "",
+              "pm.test('Payload has a name', function () {",
+              "  pm.expect(payload.names && payload.names.length, 'names[] is empty').to.be.above(0);",
+              "});",
+              "pm.test('Payload has a work relationship', function () {",
+              "  pm.expect(payload.workRelationships && payload.workRelationships.length,",
+              "    'workRelationships[] is empty - widen expand_list').to.be.above(0);",
+              "});",
+              "pm.test('Work relationship carries a legal employer', function () {",
+              "  pm.expect(rel0.LegalEmployerName, 'LegalEmployerName missing - target create will fail').to.be.a('string');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{prod_user}}", "type": "string" },
+            { "key": "password", "value": "{{prod_pass}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "REST-Framework-Version", "value": "4" }],
+        "url": {
+          "raw": "{{prod_host}}/hcmRestApi/resources/{{api_version}}/workers/{{prod_workers_uniq_id}}?expand={{expand_list}}&onlyData=true",
+          "host": ["{{prod_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "workers", "{{prod_workers_uniq_id}}"],
+          "query": [
+            { "key": "expand", "value": "{{expand_list}}" },
+            { "key": "onlyData", "value": "true" }
+          ]
+        },
+        "description": "Pulls the full worker with expanded children and builds create_payload. The transform drops audit columns and every *Id surrogate key, keeping the *Code / *Name equivalents so the target pod resolves them locally."
+      }
+    },
+    {
+      "name": "03 Target duplicate check",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const em = (pm.variables.get('prod_email') || '').trim();",
+              "const safe = em ? em.replace(/'/g, \"''\") : 'no.email.on.record';",
+              "pm.collectionVariables.set('search_q', \"emails.EmailAddress like '\" + safe + \"'\");"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Target search returned 200', function () { pm.response.to.have.status(200); });",
+              "",
+              "const items = (pm.response.json().items) || [];",
+              "const allow = String(pm.variables.get('allow_duplicate')).toLowerCase() === 'true';",
+              "",
+              "if (items.length > 0 && !allow) {",
+              "  items.forEach(function (i) { console.log('Already in target: ' + i.PersonNumber + '  ' + i.DisplayName); });",
+              "  postman.setNextRequest(null);",
+              "  throw new Error('Worker with this email already exists in the target env. Set allow_duplicate=true to create anyway.');",
+              "}",
+              "",
+              "pm.test('No duplicate in target', function () { pm.expect(items.length).to.eql(0); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "REST-Framework-Version", "value": "4" }],
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/workers?q={{search_q}}&expand=emails&onlyData=true&limit=5",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "workers"],
+          "query": [
+            { "key": "q", "value": "{{search_q}}" },
+            { "key": "expand", "value": "emails" },
+            { "key": "onlyData", "value": "true" },
+            { "key": "limit", "value": "5" }
+          ]
+        },
+        "description": "Idempotency gate. Work email is the natural key across environments because person numbers are regenerated by the target pod."
+      }
+    },
+    {
+      "name": "04 Target reference code check",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const res = pm.variables.get('ref_resource');",
+              "const flt = pm.variables.get('ref_filter');",
+              "",
+              "if (!flt) {",
+              "  console.log('ref_filter is empty - nothing checked. Skipping.');",
+              "  return;",
+              "}",
+              "",
+              "pm.test('Reference lookup returned 200', function () { pm.response.to.have.status(200); });",
+              "",
+              "const items = (pm.response.json().items) || [];",
+              "console.log(res + ' where ' + flt + ' -> ' + items.length + ' row(s) in target');",
+              "",
+              "pm.test('Reference code exists in target: ' + res + ' ' + flt, function () {",
+              "  pm.expect(items.length, 'code is missing in the target env - the create will fail or land wrong').to.be.above(0);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "REST-Framework-Version", "value": "4" }],
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/{{ref_resource}}?q={{ref_filter}}&onlyData=true&limit=5",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "{{ref_resource}}"],
+          "query": [
+            { "key": "q", "value": "{{ref_filter}}" },
+            { "key": "onlyData", "value": "true" },
+            { "key": "limit", "value": "5" }
+          ]
+        },
+        "description": "Generic reference-data pre-flight. Duplicate this request once per code you care about (legal employer, business unit, grade, department, location, payroll) and set ref_resource / ref_filter accordingly. Confirm the resource name against your pod's describe output first."
+      }
+    },
+    {
+      "name": "05 Create worker in target",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const p = pm.variables.get('create_payload');",
+              "if (!p) { throw new Error('create_payload is empty - run request 02 first.'); }",
+              "try { JSON.parse(p); } catch (e) { throw new Error('create_payload is not valid JSON: ' + e.message); }"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code !== 201 && pm.response.code !== 200) {",
+              "  console.log('Create failed with ' + pm.response.code);",
+              "  console.log(pm.response.text());",
+              "  pm.test('Worker created', function () { pm.expect.fail('HTTP ' + pm.response.code + ' - see console for the Oracle error detail'); });",
+              "  return;",
+              "}",
+              "",
+              "pm.test('Worker created in target', function () { pm.expect([200, 201]).to.include(pm.response.code); });",
+              "",
+              "const w = pm.response.json();",
+              "pm.collectionVariables.set('target_person_id', String(w.PersonId || ''));",
+              "pm.collectionVariables.set('target_person_number', String(w.PersonNumber || ''));",
+              "",
+              "const href = ((w.links || []).find(function (l) { return l.rel === 'self'; }) || (w.links || [])[0] || {}).href || '';",
+              "const m = href.match(/\\/workers\\/([^\\/?]+)/);",
+              "if (m) { pm.collectionVariables.set('target_workers_uniq_id', m[1]); }",
+              "",
+              "let log = [];",
+              "try { log = JSON.parse(pm.collectionVariables.get('clone_log') || '[]'); } catch (e) { log = []; }",
+              "log.push({",
+              "  ranAt: new Date().toISOString(),",
+              "  searchTerm: pm.variables.get('search_term'),",
+              "  displayName: pm.collectionVariables.get('prod_display_name'),",
+              "  prodPersonNumber: pm.collectionVariables.get('prod_person_number'),",
+              "  prodPersonId: pm.collectionVariables.get('prod_person_id'),",
+              "  targetPersonNumber: String(w.PersonNumber || ''),",
+              "  targetPersonId: String(w.PersonId || ''),",
+              "  targetHost: pm.variables.get('target_host')",
+              "});",
+              "pm.collectionVariables.set('clone_log', JSON.stringify(log, null, 2));",
+              "",
+              "console.log('Created ' + (w.DisplayName || '') + ' as ' + w.PersonNumber + ' (PersonId ' + w.PersonId + ')');",
+              "console.log('Prod ' + pm.collectionVariables.get('prod_person_number') + ' -> target ' + w.PersonNumber);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "REST-Framework-Version", "value": "4" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{{create_payload}}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/workers",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "workers"]
+        },
+        "description": "Posts the payload built in request 02. The response PersonNumber will usually differ from prod - the prod-to-target mapping is appended to the clone_log collection variable."
+      }
+    },
+    {
+      "name": "06 Verify worker in target",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Verify returned 200', function () { pm.response.to.have.status(200); });",
+              "",
+              "const w = pm.response.json();",
+              "const rel = (w.workRelationships || [])[0] || {};",
+              "const asg = (rel.assignments || [])[0] || {};",
+              "",
+              "console.log('Target worker  : ' + (w.DisplayName || '') + '  ' + (w.PersonNumber || ''));",
+              "console.log('Legal employer : ' + (rel.LegalEmployerName || '(none)'));",
+              "console.log('Hire date      : ' + (rel.StartDate || '(none)'));",
+              "console.log('Assignment     : ' + (asg.AssignmentNumber || '(none)') + '  status ' + (asg.AssignmentStatusTypeCode || '(none)'));",
+              "console.log('--- clone log ---');",
+              "console.log(pm.collectionVariables.get('clone_log') || '[]');",
+              "",
+              "pm.test('Work relationship created', function () {",
+              "  pm.expect(w.workRelationships && w.workRelationships.length).to.be.above(0);",
+              "});",
+              "pm.test('Assignment created', function () {",
+              "  pm.expect(rel.assignments && rel.assignments.length,",
+              "    'worker exists but has no assignment - check the assignment block of create_payload').to.be.above(0);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "REST-Framework-Version", "value": "4" }],
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/workers/{{target_workers_uniq_id}}?expand=names,emails,workRelationships,workRelationships.assignments&onlyData=true",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "workers", "{{target_workers_uniq_id}}"],
+          "query": [
+            { "key": "expand", "value": "names,emails,workRelationships,workRelationships.assignments" },
+            { "key": "onlyData", "value": "true" }
+          ]
+        },
+        "description": "Reads the worker back out of the target env and prints the running clone log."
+      }
+    },
+    {
+      "name": "07 Check user account in target",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('User account lookup returned 200', function () { pm.response.to.have.status(200); });",
+              "",
+              "const items = (pm.response.json().items) || [];",
+              "",
+              "if (items.length === 0) {",
+              "  console.log('No user account yet for PersonId ' + pm.variables.get('target_person_id') + ' - request 08 will create one.');",
+              "  return;",
+              "}",
+              "",
+              "const ua = items[0];",
+              "pm.collectionVariables.set('target_user_guid', String(ua.GUID || ''));",
+              "pm.collectionVariables.set('target_user_id', String(ua.UserId || ''));",
+              "pm.collectionVariables.set('target_login_username', String(ua.Username || ''));",
+              "",
+              "console.log('Account already exists: ' + ua.Username + '  suspended=' + ua.SuspendedFlag);",
+              "console.log('Skipping create, jumping to role assignment.');",
+              "postman.setNextRequest('09 Resolve role code in target');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "REST-Framework-Version", "value": "4" }],
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/userAccounts?q=PersonId={{target_person_id}}&onlyData=true&limit=5",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "userAccounts"],
+          "query": [
+            { "key": "q", "value": "PersonId={{target_person_id}}" },
+            { "key": "onlyData", "value": "true" },
+            { "key": "limit", "value": "5" }
+          ]
+        },
+        "description": "Depending on the enterprise User Account Creation option, POST /workers may already have auto-provisioned an account. This checks first and skips request 08 if one exists. Auto-provisioning can lag by a minute or two - if this returns empty and 08 then fails with a duplicate error, re-run request 07."
+      }
+    },
+    {
+      "name": "08 Create user account in target",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const pid = pm.variables.get('target_person_id');",
+              "if (!pid) { throw new Error('target_person_id is empty - run request 05 first.'); }",
+              "",
+              "const body = { PersonId: Number(pid), SuspendedFlag: false };",
+              "",
+              "const uname = (pm.variables.get('target_username') || '').trim();",
+              "if (uname) { body.Username = uname; }",
+              "",
+              "pm.collectionVariables.set('user_account_payload', JSON.stringify(body, null, 2));",
+              "console.log('User account payload -> ' + JSON.stringify(body));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code !== 201 && pm.response.code !== 200) {",
+              "  console.log('User account create failed with ' + pm.response.code);",
+              "  console.log(pm.response.text());",
+              "  if (pm.response.text().indexOf('PER-1532373') > -1) {",
+              "    console.log('PER-1532373 means the enterprise User Account Creation option is suppressing REST creation.');",
+              "    console.log('Fix: Setup and Maintenance > Manage Enterprise HCM Information > User and Role Provisioning, set User Account Creation to Both or Person.');",
+              "  }",
+              "  postman.setNextRequest(null);",
+              "  pm.test('User account created', function () { pm.expect.fail('HTTP ' + pm.response.code + ' - see console'); });",
+              "  return;",
+              "}",
+              "",
+              "pm.test('User account created', function () { pm.expect([200, 201]).to.include(pm.response.code); });",
+              "",
+              "const ua = pm.response.json();",
+              "pm.collectionVariables.set('target_user_guid', String(ua.GUID || ''));",
+              "pm.collectionVariables.set('target_user_id', String(ua.UserId || ''));",
+              "pm.collectionVariables.set('target_login_username', String(ua.Username || ''));",
+              "",
+              "let log = [];",
+              "try { log = JSON.parse(pm.collectionVariables.get('clone_log') || '[]'); } catch (e) { log = []; }",
+              "if (log.length) {",
+              "  log[log.length - 1].targetUsername = String(ua.Username || '');",
+              "  log[log.length - 1].targetUserGuid = String(ua.GUID || '');",
+              "  pm.collectionVariables.set('clone_log', JSON.stringify(log, null, 2));",
+              "}",
+              "",
+              "console.log('Account created: ' + ua.Username + '  UserId ' + ua.UserId);",
+              "console.log('GUID ' + ua.GUID);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "REST-Framework-Version", "value": "4" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{{user_account_payload}}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/userAccounts",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "userAccounts"]
+        },
+        "description": "PersonId alone is enough - HCM derives the username from the work email unless target_username is set. If you get HTTP 415, switch Content-Type to application/vnd.oracle.adf.resourceitem+json."
+      }
+    },
+    {
+      "name": "09 Resolve role code in target",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let queue = null;",
+              "try { queue = JSON.parse(pm.collectionVariables.get('role_queue') || 'null'); } catch (e) { queue = null; }",
+              "",
+              "if (!Array.isArray(queue) || queue.length === 0) {",
+              "  queue = String(pm.variables.get('role_codes') || '')",
+              "    .split(',').map(function (s) { return s.trim(); }).filter(Boolean);",
+              "  console.log('Role queue initialised: ' + queue.join(', '));",
+              "}",
+              "",
+              "if (queue.length === 0) {",
+              "  throw new Error('Set role_codes to at least one assignable role code, e.g. ORA_PER_EMPLOYEE_ABSTRACT');",
+              "}",
+              "",
+              "const current = queue.shift();",
+              "pm.collectionVariables.set('current_role_code', current);",
+              "pm.collectionVariables.set('role_queue', JSON.stringify(queue));",
+              "console.log('Resolving role ' + current + ' (' + queue.length + ' left after this)');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Role lookup returned 200', function () { pm.response.to.have.status(200); });",
+              "",
+              "const code = pm.variables.get('current_role_code');",
+              "const items = (pm.response.json().items) || [];",
+              "",
+              "if (items.length === 0) {",
+              "  postman.setNextRequest(null);",
+              "  throw new Error('Role code ' + code + ' does not exist in the target env, or is not exposed by rolesLOV to your API user.');",
+              "}",
+              "",
+              "pm.collectionVariables.set('target_role_id', String(items[0].RoleId || ''));",
+              "console.log(code + ' -> RoleId ' + items[0].RoleId);",
+              "",
+              "pm.test('Role code resolved: ' + code, function () {",
+              "  pm.expect(items[0].RoleId).to.not.be.undefined;",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "REST-Framework-Version", "value": "4" }],
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/rolesLOV?q=RoleCode='{{current_role_code}}'&onlyData=true&limit=5",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "rolesLOV"],
+          "query": [
+            { "key": "q", "value": "RoleCode='{{current_role_code}}'" },
+            { "key": "onlyData", "value": "true" },
+            { "key": "limit", "value": "5" }
+          ]
+        },
+        "description": "userAccountRoles needs a numeric RoleId, not a role code. rolesLOV only returns roles that are assignable under your role provisioning rules - if a role is missing here, the rules are the thing to fix, not this request."
+      }
+    },
+    {
+      "name": "10 Assign role to user account",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const guid = pm.variables.get('target_user_guid');",
+              "const rid = pm.variables.get('target_role_id');",
+              "if (!guid) { throw new Error('target_user_guid is empty - run request 07 or 08 first.'); }",
+              "if (!rid) { throw new Error('target_role_id is empty - run request 09 first.'); }",
+              "pm.collectionVariables.set('role_assign_payload', JSON.stringify({ RoleId: Number(rid) }));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const code = pm.variables.get('current_role_code');",
+              "",
+              "if (pm.response.code !== 201 && pm.response.code !== 200) {",
+              "  console.log('Role assignment failed for ' + code + ' with ' + pm.response.code);",
+              "  console.log(pm.response.text());",
+              "  pm.test('Role assigned: ' + code, function () { pm.expect.fail('HTTP ' + pm.response.code + ' - see console'); });",
+              "} else {",
+              "  pm.test('Role assigned: ' + code, function () { pm.expect([200, 201]).to.include(pm.response.code); });",
+              "  console.log('Assigned ' + code);",
+              "}",
+              "",
+              "let queue = [];",
+              "try { queue = JSON.parse(pm.collectionVariables.get('role_queue') || '[]'); } catch (e) { queue = []; }",
+              "",
+              "if (queue.length > 0) {",
+              "  console.log(queue.length + ' role(s) remaining - looping back.');",
+              "  postman.setNextRequest('09 Resolve role code in target');",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "REST-Framework-Version", "value": "4" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{{role_assign_payload}}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/userAccounts/{{target_user_guid}}/child/userAccountRoles",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "userAccounts", "{{target_user_guid}}", "child", "userAccountRoles"]
+        },
+        "description": "Assigns one role. Requests 09 and 10 loop automatically over every code in role_codes when run in the Collection Runner."
+      }
+    },
+    {
+      "name": "11 Set login password",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.variables.get('target_user_guid')) { throw new Error('target_user_guid is empty - run request 07 or 08 first.'); }",
+              "const pwd = pm.variables.get('new_password');",
+              "if (!pwd) { throw new Error('Set new_password in the environment, or skip this request and use the resetPassword action to email the user a link instead.'); }"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code !== 200) {",
+              "  console.log('Password update failed with ' + pm.response.code);",
+              "  console.log(pm.response.text());",
+              "  const t = pm.response.text();",
+              "  if (t.indexOf('PER_USER_ACC_UPDATE_INVALID') > -1) {",
+              "    console.log('PER_USER_ACC_UPDATE_INVALID usually means the account is not yet linked to the person record. Re-run request 07 and retry.');",
+              "  }",
+              "  pm.test('Password set', function () { pm.expect.fail('HTTP ' + pm.response.code + ' - see console'); });",
+              "  return;",
+              "}",
+              "",
+              "pm.test('Password set', function () { pm.response.to.have.status(200); });",
+              "console.log('Password set for ' + pm.collectionVariables.get('target_login_username'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/vnd.oracle.adf.action+json" },
+          { "key": "REST-Framework-Version", "value": "4" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"pwd\": \"{{new_password}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/userAccounts/{{target_user_guid}}/action/updatePassword",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "userAccounts", "{{target_user_guid}}", "action", "updatePassword"]
+        },
+        "description": "Sets a known password so you can log in immediately. The action content type is application/vnd.oracle.adf.action+json - a plain application/json here returns 415. Only works when the account is linked to a person record, which it is after request 05."
+      }
+    },
+    {
+      "name": "12 Verify login readiness",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Account fetch returned 200', function () { pm.response.to.have.status(200); });",
+              "",
+              "const ua = pm.response.json();",
+              "const roles = ua.userAccountRoles || [];",
+              "",
+              "console.log('=== login ready check ===');",
+              "console.log('Target env     : ' + pm.variables.get('target_host'));",
+              "console.log('Username       : ' + (ua.Username || '(none)'));",
+              "console.log('Person number  : ' + (ua.PersonNumber || '(none)'));",
+              "console.log('Suspended      : ' + ua.SuspendedFlag);",
+              "console.log('Roles          : ' + (roles.length ? roles.map(function (r) { return r.RoleCode || r.RoleName; }).join(', ') : '(none)'));",
+              "console.log('Password       : ' + (pm.variables.get('new_password') ? 'set via request 11' : 'not set - use resetPassword'));",
+              "console.log('--- clone log ---');",
+              "console.log(pm.collectionVariables.get('clone_log') || '[]');",
+              "",
+              "pm.test('Account is not suspended', function () {",
+              "  pm.expect(ua.SuspendedFlag, 'account is suspended - the user cannot sign in').to.not.eql(true);",
+              "});",
+              "pm.test('Account has at least one role', function () {",
+              "  pm.expect(roles.length, 'no roles - the user can sign in but will see nothing').to.be.above(0);",
+              "});",
+              "pm.test('Account is linked to the cloned person', function () {",
+              "  pm.expect(String(ua.PersonId || '')).to.eql(String(pm.variables.get('target_person_id')));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{target_user}}", "type": "string" },
+            { "key": "password", "value": "{{target_pass}}", "type": "string" }
+          ]
+        },
+        "method": "GET",
+        "header": [{ "key": "REST-Framework-Version", "value": "4" }],
+        "url": {
+          "raw": "{{target_host}}/hcmRestApi/resources/{{api_version}}/userAccounts/{{target_user_guid}}?expand=userAccountRoles&onlyData=true",
+          "host": ["{{target_host}}"],
+          "path": ["hcmRestApi", "resources", "{{api_version}}", "userAccounts", "{{target_user_guid}}"],
+          "query": [
+            { "key": "expand", "value": "userAccountRoles" },
+            { "key": "onlyData", "value": "true" }
+          ]
+        },
+        "description": "Final gate. Asserts the account exists, is not suspended, carries at least one role, and points at the cloned person. If all three pass, the credentials will work."
+      }
+    }
+  ]
+}
