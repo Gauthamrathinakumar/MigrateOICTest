@@ -1,5 +1,5 @@
 ------------------------
--- csg_gtm_account_sites
+-- csg_gtm_account
 -------------------------
 create or replace type csg_gtm_account_tbltyp is
    table of csg_gtm_account_obj;
