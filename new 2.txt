@@ -1,0 +1,8 @@
+<row>
+<cell>DEV</cell>
+<cell>Atzr|IwEBILZN2sY9vJ9BAhYdLM4PhcaMUAuCM1jikGm0Vf0XZ7XzHvXQreBQbnrcIrn1Xi0anHOxzJ91IpT3nPuTWqBCbFLVCI8dWvAUazfa607g0S6TX5WUTVbG2cZQwOmRJWjUrbCK76Kc6KsyA6f8PqdKs_Z9agPp18wYjHxVGJKo-d84_6nU4A7juhRRax5OM_-8YnWSHEosoCAayQ0YtfoSqoBpikogimQQBgNI--NfEALNGWDIUaUiFrZydy-4HqiD7JqqsupJLpEVCMs-R3YHtcTyfIhpMUOczQFEgCdqlVx8bnPBa-XmxWNi16UsoAfO03Zsf3-kbUP8nBaqUkkMEIxA</cell>
+<cell>amzn1.application-oa2-client</cell>
+<cell>.a5004f5bdfa9476b9d0bb2b2128dc197</cell>
+<cell>amzn1.oa2-cs.v1.</cell>
+<cell>8f52e7b7e5a37d70c7672e6abf0a1c7e3708ee5c6c9084e51d96610cfc2a1db9</cell>
+</row>
